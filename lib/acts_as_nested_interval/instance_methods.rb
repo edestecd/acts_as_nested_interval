@@ -115,7 +115,7 @@ module ActsAsNestedInterval
       begin
         db_self = self.class.find(id)
         db_parent = self.class.find(read_attribute(nested_interval_foreign_key))
-        if db_self.ancestor_of?(db_parent)
+        if db_self.move_impossible?(db_parent)
           errors.add nested_interval_foreign_key, "is descendant"
           raise ActiveRecord::RecordInvalid, self
         end
@@ -164,6 +164,25 @@ module ActsAsNestedInterval
     # Returns true is this is a child node
     def child?
       !root?
+    end
+
+    # Check if other model is in the same scope
+    def same_scope?(other)
+      nested_interval_scope_columns.all? do |attr|
+        self.send(attr) == other.send(attr)
+      end
+    end
+
+    # Extracted out so that views etc. can list only possible moves...
+    def move_possible?(target)
+      self != target && # Can't target self
+      same_scope?(target) && # can't be in different scopes
+      # detect impossible move
+      !self.ancestor_of?(target)
+    end
+
+    def move_impossible?(target)
+      !self.move_possible?(target)
     end
 
     def ancestor_of?(node)
