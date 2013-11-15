@@ -77,7 +77,7 @@ module ActsAsNestedInterval
 
     # Creates record.
     def create_nested_interval
-      if read_attribute(nested_interval_foreign_key).nil?
+      if root?
         set_nested_interval_for_top
       else
         set_nested_interval *parent.lock!.next_child_lft
@@ -122,7 +122,7 @@ module ActsAsNestedInterval
       rescue ActiveRecord::RecordNotFound => e # root
       end
       
-      if read_attribute(nested_interval_foreign_key).nil? # root move
+      if root? # root move
         set_nested_interval_for_top
       else # child move
         set_nested_interval *parent.next_child_lft
@@ -155,7 +155,17 @@ module ActsAsNestedInterval
 
       db_self.descendants.update_all sql
     end
-    
+
+    # Returns true if this is a root node.
+    def root?
+      read_attribute(nested_interval_foreign_key).nil?
+    end
+
+    # Returns true is this is a child node
+    def child?
+      !root?
+    end
+
     def ancestor_of?(node)
       node.lftp == lftp && node.lftq == lftq ||
         node.lftp > node.lftq * lftp / lftq &&
