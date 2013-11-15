@@ -19,11 +19,13 @@ module ActsAsNestedInterval
   # * <tt>:scope_columns</tt> -- an array of columns to scope independent trees.
   # * <tt>:lft_index</tt> -- whether to use functional index for lft (default false).
   # * <tt>:virtual_root</tt> -- whether to compute root's interval as in an upper root (default false)
+  # * <tt>:counter_cache</tt> --  adds a counter cache for the number of children (default false)
   # * <tt>:dependent</tt> -- dependency between the parent node and children nodes (default :restrict)
   def acts_as_nested_interval(options = {})
     cattr_accessor :nested_interval_foreign_key
     cattr_accessor :nested_interval_scope_columns
     cattr_accessor :nested_interval_lft_index
+    cattr_accessor :nested_interval_counter_cache
     cattr_accessor :nested_interval_dependent
       
     cattr_accessor :virtual_root
@@ -32,10 +34,12 @@ module ActsAsNestedInterval
     self.nested_interval_foreign_key = options[:foreign_key] || :parent_id
     self.nested_interval_scope_columns = Array(options[:scope_columns])
     self.nested_interval_lft_index = options[:lft_index]
+    self.nested_interval_counter_cache = options[:counter_cache] || false
     self.nested_interval_dependent = options[:dependent] || :restrict
       
     belongs_to :parent, class_name: name, foreign_key: nested_interval_foreign_key,
-      inverse_of: :children
+      counter_cache: nested_interval_counter_cache,
+      inverse_of:    :children
 
     has_many :children, class_name: name, foreign_key: nested_interval_foreign_key,
       dependent:  nested_interval_dependent,
