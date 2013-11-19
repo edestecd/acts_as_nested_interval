@@ -204,8 +204,9 @@ module ActsAsNestedInterval
     end
 
     # Returns depth by counting ancestors up to 0 / 1.
+    # Start at 0 like other tree/nested plugins (not at 1).
     def depth
-      n = 0
+      n = -1
       p, q = lftp, lftq
       while p != 0
         x = p.inverse(q)
