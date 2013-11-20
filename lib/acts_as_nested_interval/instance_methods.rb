@@ -168,6 +168,21 @@ module ActsAsNestedInterval
       end
     end
 
+    # This is dirty as hell...
+    # I can't find any callback that is guaranteed to occur before the db transaction
+    # There is after_commit :do_bar, :on => :update for unlocking...
+    # Anyways I want to lock the table on updates...
+    # File activerecord/lib/active_record/validations.rb, line 49
+    def save(options={})
+      nested_interval_moving = nested_interval_move?
+
+      lock_table_write if nested_interval_moving
+      result = super(options)
+      unlock_table if nested_interval_moving
+
+      result
+    end
+
   protected
 
     # Creates record.
@@ -200,10 +215,25 @@ module ActsAsNestedInterval
       lock! rescue nil
     end
 
+    # Override this method if your db requires something different...
+    def lock_table_write
+      ActiveRecord::Base.connection.execute("LOCK TABLES `#{self.class.table_name}` WRITE")
+    end
+
+    # Override this method if your db requires something different...
+    def unlock_table
+      ActiveRecord::Base.connection.execute("UNLOCK TABLES")
+    end
+
+    # Checks: :on => update and changed parent (reparent)
+    def nested_interval_move?
+      !new_record? and send(:"#{nested_interval_foreign_key}_changed?")
+    end
+
     # Updates record, updating descendants if parent association updated,
     # in which case caller should first acquire table lock.
     def update_nested_interval
-      changed = send(:"#{nested_interval_foreign_key}_changed?")
+      changed = nested_interval_move?
       if !changed
         db_self = self.class.find(id, :lock => true)
         write_attribute(nested_interval_foreign_key, db_self.read_attribute(nested_interval_foreign_key))
