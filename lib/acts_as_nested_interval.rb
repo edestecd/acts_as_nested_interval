@@ -13,7 +13,7 @@ require 'acts_as_nested_interval/class_methods'
 # or all ancestors with just one select query. You can insert and delete
 # records without a full table update.
 module ActsAsNestedInterval
-  
+
   # The +options+ hash can include:
   # * <tt>:foreign_key</tt> -- the self-reference foreign key column name (default :parent_id).
   # * <tt>:scope_columns</tt> -- an array of columns to scope independent trees.
@@ -27,16 +27,16 @@ module ActsAsNestedInterval
     cattr_accessor :nested_interval_lft_index
     cattr_accessor :nested_interval_counter_cache
     cattr_accessor :nested_interval_dependent
-      
+
     cattr_accessor :virtual_root
     self.virtual_root = !!options[:virtual_root]
-      
+
     self.nested_interval_foreign_key = options[:foreign_key] || :parent_id
     self.nested_interval_scope_columns = Array(options[:scope_columns])
     self.nested_interval_lft_index = options[:lft_index]
     self.nested_interval_counter_cache = options[:counter_cache] || false
     self.nested_interval_dependent = options[:dependent] || :restrict
-      
+
     belongs_to :parent, class_name: name, foreign_key: nested_interval_foreign_key,
       counter_cache: nested_interval_counter_cache,
       inverse_of:    :children
@@ -46,7 +46,7 @@ module ActsAsNestedInterval
       inverse_of: :parent
 
     scope :roots, -> { where(nested_interval_foreign_key => nil) }
-      
+
     if self.table_exists? # Fix problem with migrating without table
       if columns_hash["rgt"]
         scope :preorder, -> { order('rgt DESC, lftp ASC') }
@@ -59,7 +59,7 @@ module ActsAsNestedInterval
       before_create :create_nested_interval
       before_destroy :destroy_nested_interval
       before_update :update_nested_interval
-        
+
       include ActsAsNestedInterval::InstanceMethods
       extend ActsAsNestedInterval::ClassMethods
     end

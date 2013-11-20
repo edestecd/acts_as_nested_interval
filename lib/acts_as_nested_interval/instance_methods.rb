@@ -1,12 +1,12 @@
 module ActsAsNestedInterval
   module InstanceMethods
     extend ActiveSupport::Concern
-    
+
     # selectively define #descendants according to table features
     included do
-      
+
       if columns_hash["lft"]
-        
+
         def descendants
           quoted_table_name = self.class.quoted_table_name
           nested_interval_scope.where <<-SQL
@@ -14,9 +14,9 @@ module ActsAsNestedInterval
               #{quoted_table_name}.lft BETWEEN #{1.0 * lftp / lftq} AND #{1.0 * rgtp / rgtq}
           SQL
         end
-        
+
       elsif nested_interval_lft_index
-        
+
         def descendants
           quoted_table_name = self.class.quoted_table_name
           nested_interval_scope.where <<-SQL
@@ -26,9 +26,9 @@ module ActsAsNestedInterval
                 #{1.0 * rgtp / rgtq}
           SQL
         end
-        
+
       elsif connection.adapter_name == "MySQL"
-        
+
         def descendants
           quoted_table_name = self.class.quoted_table_name
           nested_interval_scope.where <<-SQL
@@ -40,9 +40,9 @@ module ActsAsNestedInterval
                 #{quoted_table_name}.lftq * #{rgtp} DIV #{rgtq}
           SQL
         end
-        
+
       else
-        
+
         def descendants
           quoted_table_name = self.class.quoted_table_name
           nested_interval_scope.where <<-SQL
@@ -54,39 +54,9 @@ module ActsAsNestedInterval
                 #{quoted_table_name}.lftq * CAST(#{rgtp} AS BIGINT) / #{rgtq}
           SQL
         end
-        
-      end
-      
-    end
-    
-    def set_nested_interval(lftp, lftq)
-      self.lftp, self.lftq = lftp, lftq
-      self.rgtp = rgtp if has_attribute?(:rgtp)
-      self.rgtq = rgtq if has_attribute?(:rgtq)
-      self.lft = lft if has_attribute?(:lft)
-      self.rgt = rgt if has_attribute?(:rgt)
-    end
-    
-    def set_nested_interval_for_top
-      if self.class.virtual_root
-        set_nested_interval(*next_root_lft)
-      else
-        set_nested_interval 0, 1
-      end
-    end
 
-    # Creates record.
-    def create_nested_interval
-      if root?
-        set_nested_interval_for_top
-      else
-        set_nested_interval *parent.lock!.next_child_lft
       end
-    end
 
-    # Destroys record.
-    def destroy_nested_interval
-      lock! rescue nil
     end
 
     def nested_interval_scope
@@ -97,63 +67,11 @@ module ActsAsNestedInterval
       self.class.where conditions
     end
 
-    # Updates record, updating descendants if parent association updated,
-    # in which case caller should first acquire table lock.
-    def update_nested_interval
-      changed = send(:"#{nested_interval_foreign_key}_changed?")
-      if !changed
-        db_self = self.class.find(id, :lock => true)
-        write_attribute(nested_interval_foreign_key, db_self.read_attribute(nested_interval_foreign_key))
-        set_nested_interval db_self.lftp, db_self.lftq
-      else
-        # No locking in this case -- caller should have acquired table lock.
-        update_nested_interval_move
+    # Check if other model is in the same scope
+    def same_scope?(other)
+      nested_interval_scope_columns.all? do |attr|
+        self.send(attr) == other.send(attr)
       end
-    end
-    
-    def update_nested_interval_move
-      begin
-        db_self = self.class.find(id)
-        db_parent = self.class.find(read_attribute(nested_interval_foreign_key))
-        if db_self.move_impossible?(db_parent)
-          errors.add nested_interval_foreign_key, "is descendant"
-          raise ActiveRecord::RecordInvalid, self
-        end
-      rescue ActiveRecord::RecordNotFound => e # root
-      end
-      
-      if root? # root move
-        set_nested_interval_for_top
-      else # child move
-        set_nested_interval *parent.next_child_lft
-      end
-      cpp = db_self.lftq * rgtp - db_self.rgtq * lftp
-      cpq = db_self.rgtp * lftp - db_self.lftp * rgtp
-      cqp = db_self.lftq * rgtq - db_self.rgtq * lftq
-      cqq = db_self.rgtp * lftq - db_self.lftp * rgtq
-
-      updates = {}
-      vars = Set.new
-      mysql = ["MySQL", "Mysql2"].include?(connection.adapter_name)
-      var = ->(v) { mysql ? vars.add?(v) ? "(@#{v} := #{v})" : "@#{v}" : v }
-      multiply = ->(c, b) { "#{c} * #{var.(b)}" }
-      add = ->(a, b) { "#{a} + #{b}" }
-      one = sprintf("%#.30f", 1)
-      divide = ->(p, q) { "#{one} * (#{p}) / (#{q})" }
-
-      if has_attribute?(:rgtp) && has_attribute?(:rgtq)
-        updates[:rgtp] = -> { add.(multiply.(cpp, :rgtp), multiply.(cpq, :rgtq)) }
-        updates[:rgtq] = -> { add.(multiply.(cqp, :rgtp), multiply.(cqq, :rgtq)) }
-        updates[:rgt] = -> { divide.(updates[:rgtp].(), updates[:rgtq].()) } if has_attribute?(:rgt)
-      end
-
-      updates[:lftp] = -> { add.(multiply.(cpp, :lftp), multiply.(cpq, :lftq)) }
-      updates[:lftq] = -> { add.(multiply.(cqp, :lftp), multiply.(cqq, :lftq)) }
-      updates[:lft] = -> { divide.(updates[:lftp].(), updates[:lftq].()) } if has_attribute?(:lft)
-
-      sql = updates.map { |k, v| "#{k} = #{v.()}" }.join(', ')
-
-      db_self.descendants.update_all sql
     end
 
     # Returns true if this is a root node.
@@ -164,13 +82,6 @@ module ActsAsNestedInterval
     # Returns true is this is a child node
     def child?
       !root?
-    end
-
-    # Check if other model is in the same scope
-    def same_scope?(other)
-      nested_interval_scope_columns.all? do |attr|
-        self.send(attr) == other.send(attr)
-      end
     end
 
     # Extracted out so that views etc. can list only possible moves...
@@ -245,7 +156,7 @@ module ActsAsNestedInterval
         return lftp + rgtp, lftq + rgtq
       end
     end
-    
+
     # Returns left end of interval for next root.
     def next_root_lft
       vr = self.class.new # a virtual root
@@ -256,6 +167,97 @@ module ActsAsNestedInterval
         return vr.lftp + vr.rgtp, vr.lftq + vr.rgtq
       end
     end
-    
+
+  protected
+
+    # Creates record.
+    def create_nested_interval
+      if root?
+        set_nested_interval_for_top
+      else
+        set_nested_interval *parent.lock!.next_child_lft
+      end
+    end
+
+    def set_nested_interval(lftp, lftq)
+      self.lftp, self.lftq = lftp, lftq
+      self.rgtp = rgtp if has_attribute?(:rgtp)
+      self.rgtq = rgtq if has_attribute?(:rgtq)
+      self.lft = lft if has_attribute?(:lft)
+      self.rgt = rgt if has_attribute?(:rgt)
+    end
+
+    def set_nested_interval_for_top
+      if self.class.virtual_root
+        set_nested_interval(*next_root_lft)
+      else
+        set_nested_interval 0, 1
+      end
+    end
+
+    # Destroys record.
+    def destroy_nested_interval
+      lock! rescue nil
+    end
+
+    # Updates record, updating descendants if parent association updated,
+    # in which case caller should first acquire table lock.
+    def update_nested_interval
+      changed = send(:"#{nested_interval_foreign_key}_changed?")
+      if !changed
+        db_self = self.class.find(id, :lock => true)
+        write_attribute(nested_interval_foreign_key, db_self.read_attribute(nested_interval_foreign_key))
+        set_nested_interval db_self.lftp, db_self.lftq
+      else
+        # No locking in this case -- caller should have acquired table lock.
+        update_nested_interval_move
+      end
+    end
+
+    def update_nested_interval_move
+      begin
+        db_self = self.class.find(id)
+        db_parent = self.class.find(read_attribute(nested_interval_foreign_key))
+        if db_self.move_impossible?(db_parent)
+          errors.add nested_interval_foreign_key, "is descendant"
+          raise ActiveRecord::RecordInvalid, self
+        end
+      rescue ActiveRecord::RecordNotFound => e # root
+      end
+
+      if root? # root move
+        set_nested_interval_for_top
+      else # child move
+        set_nested_interval *parent.next_child_lft
+      end
+      cpp = db_self.lftq * rgtp - db_self.rgtq * lftp
+      cpq = db_self.rgtp * lftp - db_self.lftp * rgtp
+      cqp = db_self.lftq * rgtq - db_self.rgtq * lftq
+      cqq = db_self.rgtp * lftq - db_self.lftp * rgtq
+
+      updates = {}
+      vars = Set.new
+      mysql = ["MySQL", "Mysql2"].include?(connection.adapter_name)
+      var = ->(v) { mysql ? vars.add?(v) ? "(@#{v} := #{v})" : "@#{v}" : v }
+      multiply = ->(c, b) { "#{c} * #{var.(b)}" }
+      add = ->(a, b) { "#{a} + #{b}" }
+      one = sprintf("%#.30f", 1)
+      divide = ->(p, q) { "#{one} * (#{p}) / (#{q})" }
+
+      if has_attribute?(:rgtp) && has_attribute?(:rgtq)
+        updates[:rgtp] = -> { add.(multiply.(cpp, :rgtp), multiply.(cpq, :rgtq)) }
+        updates[:rgtq] = -> { add.(multiply.(cqp, :rgtp), multiply.(cqq, :rgtq)) }
+        updates[:rgt] = -> { divide.(updates[:rgtp].(), updates[:rgtq].()) } if has_attribute?(:rgt)
+      end
+
+      updates[:lftp] = -> { add.(multiply.(cpp, :lftp), multiply.(cpq, :lftq)) }
+      updates[:lftq] = -> { add.(multiply.(cqp, :lftp), multiply.(cqq, :lftq)) }
+      updates[:lft] = -> { divide.(updates[:lftp].(), updates[:lftq].()) } if has_attribute?(:lft)
+
+      sql = updates.map { |k, v| "#{k} = #{v.()}" }.join(', ')
+
+      db_self.descendants.update_all sql
+    end
+
   end
 end
